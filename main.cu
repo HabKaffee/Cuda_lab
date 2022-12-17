@@ -4,11 +4,17 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cinttypes>
+#include <fstream>
 
 
 const double pi = std::atan(1) * 4;
-const double delta = 1e-4;
+const double delta = 0.005;
+const double delta_real = 0.01;
 const double eps = 1e-13;
+
+const uint8_t m = 100; // Ballon mass
+const uint16_t p = 2000; // Pressure
+const double g = 9.8; // gravity constant
 
 double Ax = -0.353, Bx = 0.353, Ay = 0.3, By = Ay, C = 3 * pi / 8;
 
@@ -86,8 +92,8 @@ __global__ void calculateValue(double* x0, double* x1, Vars* vars, size_t n, boo
     __syncthreads();
     if (threadIdx.x == 0) atomicAdd(&count, 1);
     __syncthreads();
-    if (!(count%5000) && (threadIdx.x == 0)) print_progress(count, x0, x1);
-    __syncthreads();
+    // if (!(count%5000) && (threadIdx.x == 0)) print_progress(count, x0, x1);
+    // __syncthreads();
     if (calculateDistance(x0, x1, n) < vars->Eps) break;
     if (threadIdx.x == 0) {
       for (size_t i = 0; i < n; ++i) {
@@ -141,12 +147,18 @@ int main() {
   vars->C = C, vars->Pi = pi, 
   vars->Delta = delta, vars->Eps = eps;
 
+  double velocity = 0;
   int numBlocks = 1, numThreadsPerBlock = 5;
   bool isSequential = ((numBlocks == 1) && (numThreadsPerBlock == 1)) ? true : false;
-
-  calculateValue<<<numBlocks, numThreadsPerBlock>>>(x0, x1, vars, NumOfEquations, isSequential);
-  cudaDeviceSynchronize();
-  print_result(x0);
+  for (double t = 0; t <= 2.5; t += delta_real) {
+    printf("iter %lf\n", t);
+    calculateValue<<<numBlocks, numThreadsPerBlock>>>(x0, x1, vars, NumOfEquations, isSequential);
+    cudaDeviceSynchronize();
+    print_result(x0);
+    velocity += (p * (x1[1] - x1[0]) - m * g) * delta_real / m;
+    vars->Ay += velocity * delta_real;
+    vars->By = vars->Ay;
+  }
   cudaFree(&x0);
   cudaFree(&x1);
   return 0;
