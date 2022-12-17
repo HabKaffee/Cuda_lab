@@ -5,9 +5,10 @@
 #include <cstdio>
 #include <cinttypes>
 
+
 const double pi = std::atan(1) / 4;
 const double delta = 1e-4;
-const double eps = 1e-15;
+const double eps = 1e-10;
 
 double Ax = -0.353, Bx = 0.353, Ay = 0.3, By = Ay, C = 3 * pi / 8;
 
@@ -40,32 +41,36 @@ __device__ void calculateF(double* result, double* input, Vars* vars, bool isSeq
     result[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
   } else {
     std::uint32_t id = threadIdx.x + blockIdx.x * blockDim.x;
-    // printf("Sequential = false\n");
-    // printf("id is %u\n", id);
-    switch(id) {
-      case 0:
-        printf("In 0\n");
-        result[0] = input[0] + input[2] * std::cos(1.5 * vars->Pi - input[3]) - vars->Ax;
-        break;
-      case 1:
-      printf("In 1\n");
-        result[1] = input[1] + input[2] * std::cos(1.5 * vars->Pi + input[4]) - vars->Bx;
-        break;
-      case 2:
-      printf("In 2\n");
-        result[2] = input[2] + input[2] * std::sin(1.5 * vars->Pi - input[3]) - vars->Ay;
-        break;
-      case 3:
-      printf("In 3\n");
-        result[3] = (input[3] + input[4]) * input[2] + (input[1] - input[0]) - vars->C;
-        break;
-      case 4:
-      printf("In 4\n");
-        result[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
-        break;
-      default:
-        printf("Wrong id!\n");
+
+    if (threadIdx.x == 0) {
+      // printf("Thread 0\n");
+      // printf("Before:Res_0 = %.14lf\n", result[0]);
+      result[0] = input[0] + input[2] * std::cos(1.5 * vars->Pi - input[3]) - vars->Ax;
+      // printf("After:Res_0 = %.14lf\n", result[0]);
+    } else if (threadIdx.x == 1){
+      // printf("Thread 1\n");
+      // printf("Before:Res_1 = %.14lf\n", result[1]);
+      // printf("input[1] = %lf input[2] = %lf std::cos(1.5 * vars->Pi + input[4]) = %lf vars->Bx = %lf\n",input[1], input[2], std::cos(1.5 * vars->Pi + input[4]), vars->Bx);
+
+      result[1] = input[1] + input[2] * std::cos(1.5 * vars->Pi + input[4]) - vars->Bx;
+      // printf("After:Res_1 = %.14lf\n", result[1]);
+    } else if (threadIdx.x == 2) {
+      // printf("Thread 2\n");
+      // printf("Before:Res_2 = %.14lf\n", result[2]);
+      result[2] = input[2] + input[2] * std::sin(1.5 * vars->Pi - input[3]) - vars->Ay;
+      // printf("After:Res_2 = %.14lf\n", result[2]);
+    } else if (threadIdx.x == 3) {
+      // printf("Thread 3\n");
+      // printf("Before:Res_3 = %.14lf\n", result[3]);
+      result[3] = (input[3] + input[4]) * input[2] + (input[1] - input[0]) - vars->C;
+      // printf("After:Res_3 = %.14lf\n", result[3]);
+    } else if (threadIdx.x == 4) {
+      // printf("Thread 4\n");
+      // printf("Before:Res_4 = %.14lf\n", result[4]);
+      result[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
+      // printf("After:Res_4 = %.14lf\n", result[4]);
     }
+    __syncthreads();
   }
 }
 
@@ -82,22 +87,29 @@ __device__ void print_progress(unsigned step, double* x0, double* x1) {
 }
 
 __global__ void calculateValue(double* x0, double* x1, Vars* vars, size_t n, bool isSequential) {
-  unsigned count = 0;
+  __shared__ unsigned count;
   double* FValue = new double[n];
   while(true) {
     calculateF(FValue, x0, vars, isSequential);
-    for (size_t i = 0; i < n; ++i) {
-      x1[i] = x0[i] - FValue[i] * vars->Delta;
+    __barrier_sync(0);
+    if (threadIdx.x == 0) {
+      for (size_t i = 0; i < n; ++i) {
+        printf("FValue[%lu] %lf\n", i, FValue[i]);
+        x1[i] = x0[i] - FValue[i] * vars->Delta;
+      }
     }
-    ++count;
-
-    if (!(count%5000)) print_progress(count, x0, x1);
-    
+    __barrier_sync(0);
+    if (threadIdx.x == 0) atomicAdd(&count, 1);
+    __barrier_sync(0);
+    if (!(count%5000) && (threadIdx.x == 0)) print_progress(count, x0, x1);
+    __barrier_sync(0);
     if (calculateDistance(x0, x1, n) < vars->Eps) break;
-    
-    for (size_t i = 0; i < n; ++i) {
-      x0[i] = x1[i];
+    if (threadIdx.x == 0) {
+      for (size_t i = 0; i < n; ++i) {
+        x0[i] = x1[i];
+      }
     }
+    __barrier_sync(0);
   }
   delete[] FValue;
 }
@@ -133,18 +145,18 @@ int main() {
   x0[3] = 2.0;
   x0[4] = 2.0;
 
-  x1[0] = .0;
-  x1[1] = .0;
-  x1[2] = .0;
-  x1[3] = .0;
-  x1[4] = .0;
+  x1[0] = 0.0;
+  x1[1] = 0.0;
+  x1[2] = 0.0;
+  x1[3] = 0.0;
+  x1[4] = 0.0;
   cudaMallocManaged(&vars, sizeof(Vars));
   vars->Ax = Ax, vars->Ay = Ay, 
   vars->Bx = Bx, vars->By = By, 
   vars->C = C, vars->Pi = pi, 
   vars->Delta = delta, vars->Eps = eps;
 
-  int numBlocks = 1, numThreadsPerBlock = 1;
+  int numBlocks = 1, numThreadsPerBlock = 5;
   bool isSequential = ((numBlocks == 1) && (numThreadsPerBlock == 1)) ? true : false;
 
   calculateValue<<<numBlocks, numThreadsPerBlock>>>(x0, x1, vars, NumOfEquations, isSequential);
