@@ -6,7 +6,7 @@
 #include <cinttypes>
 
 
-const double pi = std::atan(1) / 4;
+const double pi = std::atan(1) * 4;
 const double delta = 1e-4;
 const double eps = 1e-13;
 
@@ -35,22 +35,22 @@ __device__ void calculateF(double* result, double* input, Vars* vars, bool isSeq
    __shared__ double TempArray[5];
   if (threadIdx.x == 0) {
     if (isSequential) {
-      TempArray[0] = input[0] + input[2] * std::cos(1.5 * vars->Pi - input[3]) - vars->Ax;
-      TempArray[1] = input[1] + input[2] * std::cos(1.5 * vars->Pi + input[4]) - vars->Bx;
-      TempArray[2] = input[2] + input[2] * std::sin(1.5 * vars->Pi - input[3]) - vars->Ay;
+      TempArray[0] = input[0] + input[2] * std::cos(3 * vars->Pi / 2 - input[3]) - vars->Ax;
+      TempArray[1] = input[1] + input[2] * std::cos(3 * vars->Pi / 2 + input[4]) - vars->Bx;
+      TempArray[2] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 - input[3]) - vars->Ay;
       TempArray[3] = (input[3] + input[4]) * input[2] + (input[1] - input[0]) - vars->C;
-      TempArray[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
+      TempArray[4] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 + input[4]) - vars->By;
     } else {
-      TempArray[0] = input[0] + input[2] * std::cos(1.5 * vars->Pi - input[3]) - vars->Ax;
+      TempArray[0] = input[0] + input[2] * std::cos(3 * vars->Pi / 2 - input[3]) - vars->Ax;
     }
   } else if (threadIdx.x == 1) {
-    TempArray[1] = input[1] + input[2] * std::cos(1.5 * vars->Pi + input[4]) - vars->Bx;
+    TempArray[1] = input[1] + input[2] * std::cos(3 * vars->Pi / 2 + input[4]) - vars->Bx;
   } else if (threadIdx.x == 2) {
-    TempArray[2] = input[2] + input[2] * std::sin(1.5 * vars->Pi - input[3]) - vars->Ay;
+    TempArray[2] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 - input[3]) - vars->Ay;
   } else if (threadIdx.x == 3) {
     TempArray[3] = (input[3] + input[4]) * input[2] + (input[1] - input[0]) - vars->C;
   } else if (threadIdx.x == 4) {
-    TempArray[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
+    TempArray[4] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 + input[4]) - vars->By;
   }
 
   __syncthreads();
