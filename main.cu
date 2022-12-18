@@ -4,8 +4,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cinttypes>
-#include <fstream>
-
+#include <ctime>
+#include <sys/time.h>
 
 const double pi = std::atan(1) * 4;
 const double delta = 0.005;
@@ -17,6 +17,13 @@ const uint16_t p = 2000; // Pressure
 const double g = 9.8; // gravity constant
 
 double Ax = -0.353, Bx = 0.353, Ay = 0.3, By = Ay, C = 3 * pi / 8;
+
+__host__ double get_wall_time() {
+    struct timeval time;
+    gettimeofday(&time, NULL);
+    return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}
+
 
 struct VarsToShare {
   double Ax;
@@ -41,22 +48,22 @@ __device__ void calculateF(double* result, double* input, Vars* vars, bool isSeq
    __shared__ double TempArray[5];
   if (threadIdx.x == 0) {
     if (isSequential) {
-      TempArray[0] = input[0] + input[2] * std::cos(3 * vars->Pi / 2 - input[3]) - vars->Ax;
-      TempArray[1] = input[1] + input[2] * std::cos(3 * vars->Pi / 2 + input[4]) - vars->Bx;
-      TempArray[2] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 - input[3]) - vars->Ay;
+      TempArray[0] = input[0] + input[2] * std::cos(1.5 * vars->Pi - input[3]) - vars->Ax;
+      TempArray[1] = input[1] + input[2] * std::cos(1.5 * vars->Pi + input[4]) - vars->Bx;
+      TempArray[2] = input[2] + input[2] * std::sin(1.5 * vars->Pi - input[3]) - vars->Ay;
       TempArray[3] = (input[3] + input[4]) * input[2] + (input[1] - input[0]) - vars->C;
-      TempArray[4] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 + input[4]) - vars->By;
+      TempArray[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
     } else {
-      TempArray[0] = input[0] + input[2] * std::cos(3 * vars->Pi / 2 - input[3]) - vars->Ax;
+      TempArray[0] = input[0] + input[2] * std::cos(1.5 * vars->Pi - input[3]) - vars->Ax;
     }
   } else if (threadIdx.x == 1) {
-    TempArray[1] = input[1] + input[2] * std::cos(3 * vars->Pi / 2 + input[4]) - vars->Bx;
+    TempArray[1] = input[1] + input[2] * std::cos(1.5 * vars->Pi + input[4]) - vars->Bx;
   } else if (threadIdx.x == 2) {
-    TempArray[2] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 - input[3]) - vars->Ay;
+    TempArray[2] = input[2] + input[2] * std::sin(1.5 * vars->Pi - input[3]) - vars->Ay;
   } else if (threadIdx.x == 3) {
     TempArray[3] = (input[3] + input[4]) * input[2] + (input[1] - input[0]) - vars->C;
   } else if (threadIdx.x == 4) {
-    TempArray[4] = input[2] + input[2] * std::sin(3 * vars->Pi / 2 + input[4]) - vars->By;
+    TempArray[4] = input[2] + input[2] * std::sin(1.5 * vars->Pi + input[4]) - vars->By;
   }
 
   __syncthreads();
@@ -130,35 +137,45 @@ int main() {
   cudaMallocManaged(&x0, sizeof(double) * NumOfEquations);
   cudaMallocManaged(&x1, sizeof(double) * NumOfEquations);
   //preassign vals
-  x0[0] = -0.1;
-  x0[1] = 0.1;
-  x0[2] = 0.0;
-  x0[3] = 2.0;
-  x0[4] = 2.0;
+  x0[0] = -0.1; x0[1] = 0.1; x0[2] = 0.0;
+  x0[3] = 2.0; x0[4] = 2.0;
 
-  x1[0] = 0.0;
-  x1[1] = 0.0;
-  x1[2] = 0.0;
-  x1[3] = 0.0;
-  x1[4] = 0.0;
+  x1[0] = 0.0; x1[1] = 0.0; x1[2] = 0.0;
+  x1[3] = 0.0; x1[4] = 0.0;
   cudaMallocManaged(&vars, sizeof(Vars));
   vars->Ax = Ax, vars->Ay = Ay, 
   vars->Bx = Bx, vars->By = By, 
   vars->C = C, vars->Pi = pi, 
   vars->Delta = delta, vars->Eps = eps;
-
+  
   double velocity = 0;
-  int numBlocks = 1, numThreadsPerBlock = 5;
+  int numBlocks = 1, numThreadsPerBlock = 1;
+  // int numBlocks = 1, numThreadsPerBlock = 5;
   bool isSequential = ((numBlocks == 1) && (numThreadsPerBlock == 1)) ? true : false;
-  for (double t = 0; t <= 2.5; t += delta_real) {
+
+  FILE* OutputFile = fopen("cuda_singlethread.csv", "w");
+  // FILE* OutputFile = fopen("cuda_multithread.csv", "w");
+
+  fprintf(OutputFile, "step, x1, x2, y, phi1, phi2, Ax, Bx, Ay, By, C, taken_time\n");
+
+  int16_t step = 0;
+  for (double t = 0; t <= 2.5; t += delta_real, ++step) {
     printf("iter %lf\n", t);
+    double StartTime = get_wall_time();
     calculateValue<<<numBlocks, numThreadsPerBlock>>>(x0, x1, vars, NumOfEquations, isSequential);
     cudaDeviceSynchronize();
+    double EndTime = get_wall_time();
     print_result(x0);
     velocity += (p * (x1[1] - x1[0]) - m * g) * delta_real / m;
     vars->Ay += velocity * delta_real;
     vars->By = vars->Ay;
+    fprintf(OutputFile, 
+      "%d, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf\n",
+      step, x1[0], x1[1], x1[2], x1[3], x1[4], vars->Ax, vars->Bx, vars->Ay, vars->By, vars->C, EndTime - StartTime
+      );
+    fflush(OutputFile);
   }
+  fclose(OutputFile);
   cudaFree(&x0);
   cudaFree(&x1);
   return 0;
