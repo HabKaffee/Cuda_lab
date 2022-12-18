@@ -156,7 +156,7 @@ int main() {
   FILE* OutputFile = fopen("cuda_singlethread.csv", "w");
   // FILE* OutputFile = fopen("cuda_multithread.csv", "w");
 
-  fprintf(OutputFile, "step, x1, x2, y, phi1, phi2, Ax, Bx, Ay, By, C, taken_time\n");
+  fprintf(OutputFile, "step,x1,x2,y,phi1,phi2,Ax,Bx,Ay,By,C,calc_time,anim_time\n");
 
   int16_t step = 0;
   for (double t = 0; t <= 2.5; t += delta_real, ++step) {
@@ -170,8 +170,8 @@ int main() {
     vars->Ay += velocity * delta_real;
     vars->By = vars->Ay;
     fprintf(OutputFile, 
-      "%d, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf, %lf\n",
-      step, x1[0], x1[1], x1[2], x1[3], x1[4], vars->Ax, vars->Bx, vars->Ay, vars->By, vars->C, EndTime - StartTime
+      "%d,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n",
+      step, x1[0], x1[1], x1[2], x1[3], x1[4], vars->Ax, vars->Bx, vars->Ay, vars->By, vars->C, EndTime - StartTime, t
       );
     fflush(OutputFile);
   }
