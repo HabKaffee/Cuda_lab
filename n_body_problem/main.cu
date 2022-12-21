@@ -31,8 +31,7 @@ struct matPoint {
     double m;
 } typedef MatPoint;
 
-__device__ Pair* calculateForce(MatPoint* Points, Args* args) {
-    Pair* Result = new Pair[args->size];
+__device__ Pair* calculateForce(MatPoint* Points, Args* args, Pair* Result) {
     for (size_t i = 0; i < args->size; ++i) {
         double sum_x = 0;
         double sum_y = 0;
@@ -60,13 +59,10 @@ __device__ MatPoint* simulationStep(MatPoint* Points, Pair* Forces, Args* args) 
 }
 
 
-__global__ void simulationKernel(MatPoint* Points, Args* args) {
+__global__ void simulationKernel(MatPoint* Points, Args* args, Pair* Result) {
     Pair* Forces = new Pair[args->size];
-    // printf("I'm after init Forces\n");
-    Forces = calculateForce(Points, args);
-    // printf("I'm after calculate Forces\n");
+    Forces = calculateForce(Points, args, Result);
     Points = simulationStep(Points, Forces, args);
-    // printf("I'm after simulation step\n");
     delete[] Forces;
 }
 
@@ -85,12 +81,6 @@ __host__ void printToFile(std::ofstream& File, double t, MatPoint* Points, size_
         File << Points[i].x << "," << Points[i].y << ",";
     }
     File << ExecTime << "\n";
-    // // debug output
-    // std::cout << t << ", ";
-    // for (size_t i = 0; i < n; ++i) {
-    //     std::cout << Points[i].x << ", " << Points[i].y << ", ";
-    // }
-    // std::cout << ExecTime << "\n";
 }
 
 __host__ void fillMatPointsArr(MatPoint* Points, std::vector<MatPoint> PointsVec) {
@@ -117,8 +107,8 @@ int main() {
     std::vector<MatPoint> PointsVec;
     readFromFile(InputFile, PointsVec);
     size_t n = PointsVec.size();
-    // MatPoint* Points = new MatPoint[n];
-    // fillMatPointsArr(Points, PointsVec);
+    MatPoint* Points = new MatPoint[n];
+    fillMatPointsArr(Points, PointsVec);
     Args* arguments = new Args;
     std::ofstream OutputFile(OutputFilename);
     OutputFile << "t,";
@@ -127,44 +117,35 @@ int main() {
     }
     OutputFile << "Time" << "\n";
 
-
-
     MatPoint* DevicePoints;
     Args* DeviceArgs;
     cudaMallocManaged(&DevicePoints, sizeof(MatPoint) * n);
+    cudaMemcpy(DevicePoints, Points, n * sizeof(MatPoint), cudaMemcpyHostToDevice);
     cudaMallocManaged(&DeviceArgs, sizeof(Args));
-    fillMatPointsArr(DevicePoints, PointsVec);
-    DeviceArgs->G = G; DeviceArgs->dt = dt; DeviceArgs->size = n;
+    cudaMemcpy(DeviceArgs, arguments, sizeof(Args), cudaMemcpyHostToDevice);
 
-    // arguments->G = G; arguments->dt = dt; arguments->size = n;
-    // cudaMemcpy(DevicePoints, Points, sizeof(Points), cudaMemcpyHostToDevice);
-    // cudaMemcpy(DeviceArgs, arguments, sizeof(arguments), cudaMemcpyHostToDevice);
+    arguments->G = G; arguments->dt = dt; arguments->size = n;
 
     int numBlocks = 1, numThreadsPerBlock = 1;
+    
+    Pair* Result;
+    cudaMallocManaged(&Result, sizeof(Pair) * n);
 
     for (double t = 0; t < Threshold; t += dt) {
         double StartTime = get_wall_time();
-        simulationKernel<<<numBlocks, numThreadsPerBlock>>>(DevicePoints, DeviceArgs);
+        simulationKernel<<<numBlocks, numThreadsPerBlock>>>(DevicePoints, DeviceArgs, Result);
         cudaDeviceSynchronize();
-        // cudaMemcpy(Points, DevicePoints, sizeof(DevicePoints), cudaMemcpyDeviceToHost);
+        std::cout << t << std::endl;
+        cudaMemcpy(Points, DevicePoints, n * sizeof(MatPoint), cudaMemcpyDeviceToHost);
         double EndTime = get_wall_time();
-        // file output
-        // debug output
-        if (!(int(t * 1000)%1000))
-            std::cout << t << "\n";
-        // for (size_t i = 0; i < n; ++i) {
-        //     std::cout << DevicePoints[i].x << ", " << DevicePoints[i].y << ", ";
-        // }
-        // std::cout << "\n";
-        // std::cout << EndTime - StartTime << "\n";
-        printToFile(OutputFile, t, DevicePoints, n, EndTime - StartTime);
-        // printToFile(OutputFile, t, DevicePoints, n, 0);
+        printToFile(OutputFile, t, Points, n, EndTime - StartTime);
     }
 
     cudaFree(&DeviceArgs);
     cudaFree(&DevicePoints);
-    // delete[] Points;
-    // delete arguments;
+    cudaFree(&Result);
+    delete[] Points;
+    delete arguments;
 
     return 0;
 }
