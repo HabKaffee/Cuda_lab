@@ -31,38 +31,48 @@ struct matPoint {
     double m;
 } typedef MatPoint;
 
-__device__ Pair* calculateForce(MatPoint* Points, Args* args, Pair* Result) {
-    for (size_t i = 0; i < args->size; ++i) {
+__device__ void calculateForce(MatPoint* Points, Args* arguments, Pair* Result, size_t NumOfThreads) {
+    size_t LocalSize = arguments->size / NumOfThreads;
+    size_t StartIdx = LocalSize * threadIdx.x;
+    size_t EndIdx = (threadIdx.x == NumOfThreads - 1) ? (arguments->size - 1) : (LocalSize * (threadIdx.x + 1) - 1);
+
+    for (size_t i = StartIdx; i <= EndIdx; ++i) {
         double sum_x = 0;
         double sum_y = 0;
-        for (size_t j = 0; j < args->size; ++j) {
+        for (size_t j = StartIdx; j <= EndIdx; ++j) {
             if (i == j) continue;
             double distance = 
                 std::sqrt(std::pow((Points[j].x - Points[i].x), 2) + std::pow((Points[j].y - Points[i].y), 2));
             sum_x += Points[j].m * (Points[j].x - Points[i].x) / std::pow(distance, 3);
             sum_y += Points[j].m * (Points[j].y - Points[i].y) / std::pow(distance, 3);
         }
-        Result[i].first = args->G * Points[i].m * sum_x;
-        Result[i].second = args->G * Points[i].m * sum_y;
+        Result[i].first = arguments->G * Points[i].m * sum_x;
+        Result[i].second = arguments->G * Points[i].m * sum_y;
     }
-    return Result;
 }
 
-__device__ MatPoint* simulationStep(MatPoint* Points, Pair* Forces, Args* args) {
-    for (size_t i = 0; i < args->size; ++i) {
-        Points[i].vx += Forces[i].first / Points[i].m * args->dt;
-        Points[i].vy += Forces[i].second / Points[i].m * args->dt;
-        Points[i].x += Points[i].vx * args->dt;
-        Points[i].y += Points[i].vy * args->dt;
+__device__ void simulationStep(MatPoint* Points, Pair* Forces, Args* arguments, size_t NumOfThreads) {
+    size_t LocalSize = arguments->size / NumOfThreads;
+    size_t StartIdx = LocalSize * threadIdx.x;
+    size_t EndIdx = (threadIdx.x == NumOfThreads - 1) ? (arguments->size) : (LocalSize * (threadIdx.x + 1) - 1);
+    
+    for (size_t i = StartIdx; i <= EndIdx; ++i) {
+        Points[i].vx += Forces[i].first / Points[i].m * arguments->dt;
+        Points[i].vy += Forces[i].second / Points[i].m * arguments->dt;
+        Points[i].x += Points[i].vx * arguments->dt;
+        Points[i].y += Points[i].vy * arguments->dt;
     }
-    return Points;
 }
 
 
-__global__ void simulationKernel(MatPoint* Points, Args* args, Pair* Result) {
-    Pair* Forces = new Pair[args->size];
-    Forces = calculateForce(Points, args, Result);
-    Points = simulationStep(Points, Forces, args);
+__global__ void simulationKernel(MatPoint* Points, Args* arguments, Pair* Result, size_t* NumOfThreads) {
+    Pair* Forces = new Pair[arguments->size];
+    // Forces = calculateForce(Points, arguments, Result, *NumOfThreads);
+    calculateForce(Points, arguments, Result, *NumOfThreads);
+    __syncthreads();
+    // Points = simulationStep(Points, Forces, arguments, *NumOfThreads);
+    simulationStep(Points, Forces, arguments, *NumOfThreads);
+    __syncthreads();
     delete[] Forces;
 }
 
@@ -101,7 +111,7 @@ __host__ double get_wall_time() {
 
 int main() {
     std::string InputFilename = "input.txt";
-    std::string OutputFilename = "output.csv";
+    std::string OutputFilename = "output_32_thread.csv";
     std::ifstream InputFile(InputFilename);
 
     std::vector<MatPoint> PointsVec;
@@ -121,19 +131,23 @@ int main() {
     Args* DeviceArgs;
     cudaMallocManaged(&DevicePoints, sizeof(MatPoint) * n);
     cudaMemcpy(DevicePoints, Points, n * sizeof(MatPoint), cudaMemcpyHostToDevice);
+
+    arguments->G = G; arguments->dt = dt; arguments->size = n;
     cudaMallocManaged(&DeviceArgs, sizeof(Args));
     cudaMemcpy(DeviceArgs, arguments, sizeof(Args), cudaMemcpyHostToDevice);
 
-    arguments->G = G; arguments->dt = dt; arguments->size = n;
-
-    int numBlocks = 1, numThreadsPerBlock = 1;
+    size_t numBlocks = 1, numThreadsPerBlock = 32;
     
     Pair* Result;
     cudaMallocManaged(&Result, sizeof(Pair) * n);
 
+    size_t* NumOfThreadsDevice;
+    cudaMallocManaged(&NumOfThreadsDevice, sizeof(size_t));
+    cudaMemcpy(NumOfThreadsDevice, &numThreadsPerBlock, sizeof(size_t), cudaMemcpyHostToDevice);
+
     for (double t = 0; t < Threshold; t += dt) {
         double StartTime = get_wall_time();
-        simulationKernel<<<numBlocks, numThreadsPerBlock>>>(DevicePoints, DeviceArgs, Result);
+        simulationKernel<<<numBlocks, numThreadsPerBlock>>>(DevicePoints, DeviceArgs, Result, NumOfThreadsDevice);
         cudaDeviceSynchronize();
         std::cout << t << std::endl;
         cudaMemcpy(Points, DevicePoints, n * sizeof(MatPoint), cudaMemcpyDeviceToHost);
